@@ -13,8 +13,11 @@ docker run -v $PWD:/usr/local/tomcat/webapps/system-info -p 8080:8080 tomcat:9-j
 本系列文章记录了企业客户在应用Kubernetes时的一些常见问题
 
 第一篇：Java应用资源限制的迷思
+
 第二篇：利用LXCFS提升容器资源可见性
+
 第三篇：解决服务依赖
+
 随着容器技术的成熟，越来越多的企业客户在企业中选择Docker和Kubernetes作为应用平台的基础。然而在实践过程中，还会遇到很多具体问题。本系列文章会记录阿里云容器服务团队在支持客户中的一些心得体会和最佳实践。我们也欢迎您通过邮件和钉钉群和我们联系，分享您的思路和遇到的问题。
 
 在对Java应用容器化部署的过程中，有些同学反映：自己设置了容器的资源限制，但是Java应用容器在运行中还是会莫名奇妙地被OOM Killer干掉。
@@ -25,6 +28,7 @@ docker run -v $PWD:/usr/local/tomcat/webapps/system-info -p 8080:8080 tomcat:9-j
 
 git clone https://github.com/denverdino/system-info
 cd system-info`
+
 下面是一个Kubernetes的Pod的定义描述：
 
 Pod中的app是一个初始化容器，负责把一个JSP应用拷贝到 tomcat 容器的 “webapps”目录下。注： 镜像中JSP应用index.jsp用于显示JVM和系统资源信息。
@@ -73,10 +77,12 @@ $ kubectl get pods test
 NAME      READY     STATUS    RESTARTS   AGE
 test      1/1       Running   0          28s
 $ kubectl exec test curl http://localhost:8080/system-info/
+
 ...
 我们可以看到HTML格式的系统CPU/Memory等信息，我们也可以用 html2text 命令将其转化成为文本格式。
 
 注意：本文是在一个 2C 4G的节点上进行的测试，在不同环境中测试输出的结果会有所不同
+
 
 $ kubectl exec test curl http://localhost:8080/system-info/ | html2text
 
@@ -91,7 +97,9 @@ Heap Memory Usage     init = 65011712(63488K) used = 19873704(19407K) committed
                       = 65536000(64000K) max = 921174016(899584K)
 Non-Heap Memory Usage init = 2555904(2496K) used = 32944912(32172K) committed =
                       33882112(33088K) max = -1(-1K)
-我们可以发现，容器中看到的系统内存是 3951MB，而JVM Heap Size最大是 878MB。纳尼？！我们不是设置容器资源的容量为256MB了吗？如果这样，当应用内存的用量超出了256MB，JVM还没对其进行GC，而JVM进程就会被系统直接OOM干掉了。
+                      
+我们可以发现，容器中看到的系统内存是 3951MB，而JVM Heap Size最大是 878MB。
+纳尼？！我们不是设置容器资源的容量为256MB了吗？如果这样，当应用内存的用量超出了256MB，JVM还没对其进行GC，而JVM进程就会被系统直接OOM干掉了。
 
 问题的根源在于：
 
@@ -101,14 +109,14 @@ Docker容器利用CGroup对进程使用的资源进行限制，而在容器中�
 
 了解了问题的根源，我们就可以非常简单地解决问题了
 
-解决思路
-开启CGroup资源感知
+解决思路：开启CGroup资源感知
 Java社区也关注到这个问题，并在JavaSE8u131+和JDK9 支持了对容器资源限制的自动感知能力 https://blogs.oracle.com/java-platform-group/java-se-support-for-docker-cpu-and-memory-limits
 
 其用法就是添加如下参数
 
 java -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap …
 我们在上文示例的tomcat容器添加环境变量 “JAVA_OPTS”参数
+
 
 apiVersion: v1
 kind: Pod
@@ -167,7 +175,9 @@ Heap Memory Usage     init = 8388608(8192K) used = 25280928(24688K) committed =
 Non-Heap Memory Usage init = 2555904(2496K) used = 31970840(31221K) committed =
                       32768000(32000K) max = -1(-1K)
 
-我们看到JVM最大的Heap大小变成了112MB，这很不错，这样就能保证我们的应用不会轻易被OOM了。随后问题又来了，为什么我们设置了容器最大内存限制是256MB，而JVM只给Heap设置了112MB的最大值呢？
+
+我们看到JVM最大的Heap大小变成了112MB，这很不错，这样就能保证我们的应用不会轻易被OOM了。
+随后问题又来了，为什么我们设置了容器最大内存限制是256MB，而JVM只给Heap设置了112MB的最大值呢？
 
 这就涉及到JVM的内存管理的细节了，JVM中的内存消耗包含Heap和Non-Heap两类；类似Class的元信息，JIT编译过的代码，线程堆栈(thread stack)，GC需要的内存空间等都属于Non-Heap内存，所以JVM还会根据CGroup的资源限制预留出部分内存给Non Heap，来保障系统的稳定。（在上面的示例中我们可以看到，tomcat启动后Non Heap占用了近32MB的内存）
 
