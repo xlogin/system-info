@@ -1,0 +1,79 @@
+Kubernetes以其开放的平台和活跃的社区征服了众多用户，然而其陡峭的学习曲线也让初学者望而生畏。今天希望通过几个技巧帮助大家简化 Kubernetes Yaml 文件的编写。
+Kubernetes 提供了丰富的 kubectl 命令，可以较为方便地处理常见任务。如果需要自动化处理复杂的Kubernetes任务，常常需要编写Yaml配置文件。由于Yaml文件格式比较复杂，即使是老司机有时也不免会犯错或需要查询文档，也有人开玩笑这是使用 Yaml 编程。我们今天将介绍几个方法来帮助大家来简化 Kubernetes Yaml 文件创建。
+
+模拟命令执行
+kubectl中很多命令支持 --dry-run 和 -o yaml 参数，可以方便地模拟命令执行，并输出yaml格式的命令请求，这样我们就可以将执行结果 Copy & Paste到自己的编辑器中，修改完成自己的配置文件。
+
+$ kubectl run myapp --image=nginx --dry-run -o yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    run: myapp
+  name: myapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: myapp
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        run: myapp
+    spec:
+      containers:
+      - image: nginx
+        name: myapp
+        resources: {}
+status: {}
+$ kubectl create secret generic mysecret --from-literal=quiet-phrase="Shh! Dont' tell" -o yaml --dry-run
+apiVersion: v1
+data:
+  quiet-phrase: U2hoISBEb250JyB0ZWxs
+kind: Secret
+metadata:
+  creationTimestamp: null
+  name: mysecret
+导出资源描述
+kubectl get <resource-type> <resource> --export -o yaml 命令会以Yaml格式导出系统中已有资源描述
+
+比如，我们可以将系统中 mysql 部署的描述导成 Yaml 文件
+
+$ kubectl get deployment mysql --export -o yaml > mysql.yaml 
+Kompose转换
+Docker Compose是最为流行的容器编排开发工具，可以方便地在Docker/Docker Swarm环境下开发、部署容器编排模板。
+
+Kompose是Kubernetes社区开发的一个转换工具，可以方便地将简单的Docker Compose模板转化成为Kubernetes的Yaml描述文件，并在Kubernetes集群上部署和管理应用
+
+我们可以通过 https://github.com/kubernetes/kompose 获取最新的kompose 工具
+
+如下 docker-compose.yaml 模板描述了一个 WordPress 编排，其中包含两个服务，wordpress服务和mysql服务，为了将 wordpress服务暴露给外部访问，我们增加了一个 Kompose 特有的标签 kompose.service.type: nodeport，将服务以NodePort方式提供对外访问方式。
+
+version: '2'
+services:
+  wordpress:
+    image: wordpress:4
+    environment:
+      - WORDPRESS_DB_PASSWORD=password
+    ports:
+      - 80:80
+    depends_on:
+      - mysql
+    labels: 
+      kompose.service.type: nodeport
+  mysql:
+    image: mysql:5.7
+    environment:
+      - MYSQL_ROOT_PASSWORD=password
+我们可以通过kompose convert命令转换为 Kubernetes 的 Deployment和Service的资源描述，
+
+$ kompose convert
+WARN Unsupported depends_on key - ignoring        
+INFO Kubernetes file "mysql-service.yaml" created 
+INFO Kubernetes file "wordpress-service.yaml" created 
+INFO Kubernetes file "mysql-deployment.yaml" created 
+INFO Kubernetes file "wordpress-deployment.yaml" created 
+也可以通过kompose convert --stdout命令输出到标准输出
